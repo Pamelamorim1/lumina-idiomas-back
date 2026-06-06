@@ -1,0 +1,33 @@
+# Node & npm
+node_modules
+npm-debug.log*
+yarn-debug.log*
+
+# Prisma
+schema.prisma
+
+# Environment variables – keep secrets out of VCS
+.env
+.env.*
+
+# Prisma – schema migrations and generated client (not needed in repo)
+/prisma/migrations/
+/src/generated/
+
+# Build artifacts (if any)
+/dist/
+/build/
+
+# Logs and temporary files
+logs/
+*.log
+/tmp/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE / editor artefacts
+.vscode/
+.idea/
+*.swp
