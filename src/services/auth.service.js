@@ -24,7 +24,7 @@ exports.checkEmailExists = async (email) => {
 /**
  * Helper to map the database user progress and gamification to user profile.
  */
-const mapUserProfile = (user, progress) => {
+const mapUserProfile = (user, progress, licoes = []) => {
   const idiomaNome = progress?.idioma?.nome || null;
   const nivelNome = progress?.nivel?.nome || null;
   const objetivoNome = progress?.objetivo?.nome || null;
@@ -52,25 +52,20 @@ const mapUserProfile = (user, progress) => {
     }
   }
 
-  const diasSeguidos = progress?.usuario_gamificacao?.dias_ofensiva ?? 1;
-  const pontosGanhos = progress?.usuario_gamificacao?.pontos_acumulados ?? 150;
+  const diasSeguidos = progress?.usuario_gamificacao?.dias_ofensiva ?? 0;
+  const pontosGanhos = progress?.usuario_gamificacao?.pontos_acumulados ?? 0;
 
-  const licoesDoDia = [
-    {
-      id: 1,
-      titulo: "Verbos Modais",
-      duracao: "10 min",
-      progresso: 0.4,
-      tipo: "grammar"
-    },
-    {
-      id: 2,
-      titulo: "Conversação no Café",
-      duracao: "15 min",
-      progresso: 0.0,
-      tipo: "conversation"
-    }
-  ];
+  const licoesDoDia = licoes.map(lic => {
+    const prog = lic.progresso_licao?.[0];
+    const pct = prog ? (prog.progresso_porcentagem || 0) : 0;
+    return {
+      id: lic.id,
+      titulo: lic.titulo,
+      duracao: `${lic.duracao_minutos || 10} min`,
+      progresso: pct / 100,
+      tipo: lic.tipo || 'grammar'
+    };
+  });
 
   return {
     id: user.id,
@@ -120,7 +115,24 @@ exports.getUserById = async (id) => {
     }
   });
 
-  return mapUserProfile(user, progress);
+  let licoes = [];
+  if (progress && progress.id_idioma && progress.id_nivel) {
+    licoes = await db.licao.findMany({
+      where: {
+        id_idioma: progress.id_idioma,
+        id_nivel: progress.id_nivel
+      },
+      include: {
+        progresso_licao: {
+          where: {
+            id_usuario: user.id
+          }
+        }
+      }
+    });
+  }
+
+  return mapUserProfile(user, progress, licoes);
 };
 
 exports.signup = async ({ nomeCompleto, email, password }) => {
@@ -214,8 +226,25 @@ exports.login = async ({ email, password }) => {
     }
   });
 
+  let licoes = [];
+  if (progress && progress.id_idioma && progress.id_nivel) {
+    licoes = await db.licao.findMany({
+      where: {
+        id_idioma: progress.id_idioma,
+        id_nivel: progress.id_nivel
+      },
+      include: {
+        progresso_licao: {
+          where: {
+            id_usuario: user.id
+          }
+        }
+      }
+    });
+  }
+
   return {
-    user: mapUserProfile(user, progress),
+    user: mapUserProfile(user, progress, licoes),
     token
   };
 };
@@ -446,6 +475,23 @@ exports.selectStartingPoint = async (userId, pontoPartida, etapaCadastroId) => {
       id_etapa: nextEtapaId
     }
   });
+
+  if (pontoPartida === 'zero') {
+    const existingGamificacao = await db.usuario_gamificacao.findUnique({
+      where: { id_usuario_idioma: record.id }
+    });
+
+    if (!existingGamificacao) {
+      await db.usuario_gamificacao.create({
+        data: {
+          id_usuario_idioma: record.id,
+          dias_ofensiva: 0,
+          pontos_acumulados: 0,
+          ultima_atividade: new Date()
+        }
+      });
+    }
+  }
 
   return {
     etapaCadastro: record.id_etapa,

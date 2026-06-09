@@ -8,7 +8,6 @@ schema.prisma
 
 # Environment variables – keep secrets out of VCS
 .env
-.env.*
 
 # Prisma – schema migrations and generated client (not needed in repo)
 /prisma/migrations/
