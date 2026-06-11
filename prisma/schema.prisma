@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model categoria {
+  id        Int         @id @default(autoincrement())
+  nome      String      @unique @db.VarChar(100)
+  flashcard flashcard[]
+  licao     licao[]
+}
+
+model etapa_cadastro {
+  id             Int              @id @default(autoincrement())
+  nome           String           @unique @db.VarChar(100)
+  ordem          Int
+  usuario_idioma usuario_idioma[]
+}
+
+model flashcard {
+  id                          Int                           @id @default(autoincrement())
+  id_categoria                Int
+  id_nivel                    Int
+  frente                      String
+  verso                       String
+  categoria                   categoria                     @relation(fields: [id_categoria], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_categoria")
+  nivel                       nivel                         @relation(fields: [id_nivel], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_nivel")
+  usuario_flashcard_progresso usuario_flashcard_progresso[]
+}
+
+model idioma {
+  id             Int              @id @default(autoincrement())
+  nome           String           @unique @db.VarChar(100)
+  licao          licao[]
+  usuario_idioma usuario_idioma[]
+}
+
+model licao {
+  id              Int               @id @default(autoincrement())
+  id_idioma       Int
+  id_nivel        Int
+  id_categoria    Int
+  titulo          String            @db.VarChar(150)
+  tipo            String?           @db.VarChar(50)
+  duracao_minutos Int?              @default(10)
+  tipo_pergunta   String            @default("SELECAO_UNICA") @db.VarChar(30)
+  categoria       categoria         @relation(fields: [id_categoria], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_categoria")
+  idioma          idioma            @relation(fields: [id_idioma], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_idioma")
+  nivel           nivel             @relation(fields: [id_nivel], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_nivel")
+  licao_conteudo  licao_conteudo[]
+  progresso_licao progresso_licao[]
+  usuario_licao   usuario_licao[]
+}
+
+model nivel {
+  id             Int              @id @default(autoincrement())
+  nome           String           @unique @db.VarChar(50)
+  ordem          Int
+  flashcard      flashcard[]
+  licao          licao[]
+  usuario_idioma usuario_idioma[]
+}
+
+model objetivo {
+  id             Int              @id @default(autoincrement())
+  nome           String           @unique @db.VarChar(100)
+  descricao      String?          @db.VarChar(255)
+  usuario_idioma usuario_idioma[]
+}
+
+model progresso_licao {
+  id                      Int              @id @default(autoincrement())
+  id_usuario              Int
+  id_licao                Int
+  progresso_porcentagem   Int?             @default(0)
+  data_conclusao          DateTime?        @db.Timestamp(6)
+  id_status               Int              @default(1)
+  total_licoes_concluidas Int?             @default(0)
+  licao                   licao            @relation(fields: [id_licao], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_licao")
+  status_progresso        status_progresso @relation(fields: [id_status], references: [id], onUpdate: NoAction, map: "fk_progresso_licao_status")
+  usuario                 usuario          @relation(fields: [id_usuario], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario")
+}
+
+model usuario {
+  id                          Int                           @id @default(autoincrement())
+  nome_completo               String                        @db.VarChar(255)
+  email                       String                        @unique @db.VarChar(255)
+  senha_hash                  String                        @db.VarChar(255)
+  is_ativo                    Boolean?                      @default(true)
+  data_criacao                DateTime?                     @default(now()) @db.Timestamp(6)
+  progresso_licao             progresso_licao[]
+  usuario_flashcard_progresso usuario_flashcard_progresso[]
+  usuario_idioma              usuario_idioma[]
+  usuario_licao               usuario_licao[]
+}
+
+model usuario_flashcard_progresso {
+  id                   Int       @id @default(autoincrement())
+  id_usuario           Int
+  id_flashcard         Int
+  fator_facilidade     Float?    @default(2.5)
+  proxima_revisao      DateTime? @default(now()) @db.Timestamp(6)
+  numero_de_repeticoes Int?      @default(0)
+  flashcard            flashcard @relation(fields: [id_flashcard], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_flashcard")
+  usuario              usuario   @relation(fields: [id_usuario], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario")
+
+  @@index([proxima_revisao], map: "idx_flashcard_revisao")
+}
+
+model usuario_gamificacao {
+  id                Int            @id @default(autoincrement())
+  id_usuario_idioma Int            @unique
+  dias_ofensiva     Int?           @default(0)
+  pontos_acumulados Int?           @default(0)
+  ultima_atividade  DateTime?      @db.Date
+  usuario_idioma    usuario_idioma @relation(fields: [id_usuario_idioma], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario_idioma")
+}
+
+model usuario_idioma {
+  id                  Int                  @id @default(autoincrement())
+  id_usuario          Int
+  id_idioma           Int
+  data_interesse      DateTime?            @default(now()) @db.Timestamp(6)
+  id_objetivo         Int?
+  id_nivel            Int?
+  id_etapa            Int                  @default(1)
+  usuario_gamificacao usuario_gamificacao?
+  idioma              idioma               @relation(fields: [id_idioma], references: [id], onUpdate: NoAction, map: "fk_idioma")
+  usuario             usuario              @relation(fields: [id_usuario], references: [id], onUpdate: NoAction, map: "fk_usuario")
+  etapa_cadastro      etapa_cadastro       @relation(fields: [id_etapa], references: [id], onUpdate: NoAction, map: "fk_usuario_idioma_etapa")
+  nivel               nivel?               @relation(fields: [id_nivel], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_usuario_idioma_nivel")
+  objetivo            objetivo?            @relation(fields: [id_objetivo], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_usuario_idioma_objetivo")
+}
+
+model licao_conteudo {
+  id               Int           @id @default(autoincrement())
+  id_licao         Int
+  codigo_idioma    String        @db.VarChar(5)
+  titulo           String        @db.VarChar(255)
+  descricao        String?
+  resposta_escrita String?       @db.VarChar(255)
+  licao            licao         @relation(fields: [id_licao], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_licao")
+  licao_opcao      licao_opcao[]
+}
+
+model usuario_licao {
+  id                   Int       @id @default(autoincrement())
+  id_usuario           Int
+  id_licao             Int
+  foi_concluida        Boolean?  @default(false)
+  pontos_obtidos       Int?      @default(0)
+  tempo_gasto_segundos Int?      @default(0)
+  respostas_corretas   Int?      @default(0)
+  total_questoes       Int?      @default(0)
+  data_atividade       DateTime? @default(now()) @db.Timestamp(6)
+  licao                licao     @relation(fields: [id_licao], references: [id], onUpdate: NoAction, map: "fk_licao_atividade")
+  usuario              usuario   @relation(fields: [id_usuario], references: [id], onUpdate: NoAction, map: "fk_usuario_atividade")
+}
+
+model licao_opcao {
+  id                Int            @id @default(autoincrement())
+  texto_opcao       String
+  eh_correta        Boolean        @default(false)
+  id_licao_conteudo Int
+  licao_conteudo    licao_conteudo @relation(fields: [id_licao_conteudo], references: [id], onUpdate: NoAction, map: "fk_licao_opcao_conteudo")
+}
+
+model status_progresso {
+  id              Int               @id @default(autoincrement())
+  chave           String            @unique @db.VarChar(30)
+  descricao       String            @db.VarChar(100)
+  progresso_licao progresso_licao[]
+}
