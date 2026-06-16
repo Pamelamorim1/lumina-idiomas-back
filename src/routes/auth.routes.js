@@ -10,6 +10,7 @@ router.post('/signup', authController.signup);
 router.post('/login', authController.login);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
+router.post('/change-password', authMiddleware, authController.changePassword);
 router.get('/me', authMiddleware, authController.getMe);
 router.post('/select-language', authMiddleware, authController.selectLanguage);
 router.post('/select-objective', authMiddleware, authController.selectObjective);

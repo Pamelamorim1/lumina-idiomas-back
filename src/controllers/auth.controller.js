@@ -188,6 +188,38 @@ exports.resetPassword = async (req, res, next) => {
   }
 };
 
+exports.changePassword = async (req, res, next) => {
+  try {
+    const userId = req.userId;
+    const { senhaAtual, novaSenha } = req.body;
+
+    if (!senhaAtual || !novaSenha) {
+      return res.status(400).json({
+        success: false,
+        message: 'Senha atual e nova senha são obrigatórias.',
+        data: null
+      });
+    }
+
+    await authService.changePassword(userId, senhaAtual, novaSenha);
+
+    res.status(200).json({
+      success: true,
+      message: 'Senha alterada com sucesso!',
+      data: null
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        success: false,
+        message: error.message,
+        data: null
+      });
+    }
+    next(error);
+  }
+};
+
 exports.selectLanguage = async (req, res, next) => {
   try {
     const userId = req.userId; // From authMiddleware

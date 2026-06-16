@@ -8,6 +8,16 @@ const emailService = require('./email.service');
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_change_me_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
+function validatePasswordStrength(password) {
+  if (!password || password.length < 8) {
+    return 'A senha deve conter no mínimo 8 caracteres.';
+  }
+  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+    return 'A senha deve incluir letras maiúsculas, minúsculas e números.';
+  }
+  return null;
+}
+
 /**
  * Checks if a user exists in the database by their email.
  * @param {string} email 
@@ -305,6 +315,61 @@ exports.resetPassword = async (token, newPassword) => {
     }
     throw error;
   }
+};
+
+/**
+ * Changes the password for an authenticated user.
+ */
+exports.changePassword = async (userId, senhaAtual, novaSenha) => {
+  const user = await db.usuario.findUnique({
+    where: { id: parseInt(userId, 10) }
+  });
+
+  if (!user) {
+    const err = new Error('Usuário não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+
+  if (!user.is_ativo) {
+    const err = new Error('Esta conta está desativada.');
+    err.status = 403;
+    throw err;
+  }
+
+  const isMatch = await bcrypt.compare(senhaAtual, user.senha_hash);
+  if (!isMatch) {
+    const err = new Error('Senha atual incorreta.');
+    err.status = 401;
+    throw err;
+  }
+
+  if (senhaAtual === novaSenha) {
+    const err = new Error('A nova senha deve ser diferente da senha atual.');
+    err.status = 400;
+    throw err;
+  }
+
+  const strengthError = validatePasswordStrength(novaSenha);
+  if (strengthError) {
+    const err = new Error(strengthError);
+    err.status = 400;
+    throw err;
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(novaSenha, salt);
+
+  const updatedUser = await db.usuario.update({
+    where: { id: user.id },
+    data: { senha_hash: hashedPassword }
+  });
+
+  emailService.sendPasswordChangedEmail(updatedUser.email, updatedUser.nome_completo).catch(err => {
+    console.error('[Password Changed Email Error]', err.message);
+  });
+
+  return true;
 };
 
 /**
