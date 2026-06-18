@@ -27,3 +27,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Documentation (local only)
+doc/
+
+# User uploads
+uploads/

@@ -4,12 +4,23 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database'); // Prisma Client instance
 const emailService = require('./email.service');
+const profileService = require('./profile.service');
 
 const onboardingService = require('./onboarding.service');
 const lessonService = require('./lesson.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_change_me_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+function validatePasswordStrength(password) {
+  if (!password || password.length < 8) {
+    return 'A senha deve conter no mínimo 8 caracteres.';
+  }
+  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+    return 'A senha deve incluir letras maiúsculas, minúsculas e números.';
+  }
+  return null;
+}
 
 // Re-export onboarding methods
 exports.selectLanguage = onboardingService.selectLanguage;
@@ -34,10 +45,30 @@ exports.checkEmailExists = async (email) => {
   return !!user;
 };
 
+async function fetchLicoes(progress, userId) {
+  if (!progress?.id_idioma || !progress?.id_nivel) {
+    return [];
+  }
+
+  return db.licao.findMany({
+    where: {
+      id_idioma: progress.id_idioma,
+      id_nivel: progress.id_nivel
+    },
+    include: {
+      progresso_licao: {
+        where: {
+          id_usuario: userId
+        }
+      }
+    }
+  });
+}
+
 /**
  * Helper to map the database user progress and gamification to user profile.
  */
-const mapUserProfile = (user, progress, licoes = []) => {
+const mapUserProfile = (user, progress, avatar, baseUrl, licoes = []) => {
   const idiomaNome = progress?.idioma?.nome || null;
   const nivelNome = progress?.nivel?.nome || null;
   const objetivoNome = progress?.objetivo?.nome || null;
@@ -70,6 +101,11 @@ const mapUserProfile = (user, progress, licoes = []) => {
     id: user.id,
     nomeCompleto: user.nome_completo,
     email: user.email,
+    telefone: user.telefone ?? null,
+    bio: user.bio ?? null,
+    fotoUrl: avatar
+      ? profileService.buildFotoUrl(baseUrl || '', avatar.caminho, avatar.data_criacao)
+      : null,
     criadoEm: user.data_criacao,
     ativo: user.is_ativo,
     etapaCadastro: progress?.id_etapa || 1,
@@ -89,13 +125,15 @@ const mapUserProfile = (user, progress, licoes = []) => {
  * @param {number|string} id 
  * @returns {Promise<object|null>}
  */
-exports.getUserById = async (id) => {
+exports.getUserById = async (id, baseUrl = '') => {
   const user = await db.usuario.findUnique({
     where: { id: parseInt(id, 10) },
     select: {
       id: true,
       nome_completo: true,
       email: true,
+      telefone: true,
+      bio: true,
       is_ativo: true,
       data_criacao: true
     }
@@ -103,35 +141,23 @@ exports.getUserById = async (id) => {
 
   if (!user) return null;
 
-  const progress = await db.usuario_idioma.findFirst({
-    where: { id_usuario: user.id },
-    orderBy: { id: 'desc' },
-    include: {
-      idioma: true,
-      nivel: true,
-      objetivo: true,
-      usuario_gamificacao: true
-    }
-  });
-
-  let licoes = [];
-  if (progress && progress.id_idioma && progress.id_nivel) {
-    licoes = await db.licao.findMany({
-      where: {
-        id_idioma: progress.id_idioma,
-        id_nivel: progress.id_nivel
-      },
+  const [progress, avatar] = await Promise.all([
+    db.usuario_idioma.findFirst({
+      where: { id_usuario: user.id },
+      orderBy: { id: 'desc' },
       include: {
-        progresso_licao: {
-          where: {
-            id_usuario: user.id
-          }
-        }
+        idioma: true,
+        nivel: true,
+        objetivo: true,
+        usuario_gamificacao: true
       }
-    });
-  }
+    }),
+    profileService.getActiveAvatar(user.id),
+  ]);
 
-  return mapUserProfile(user, progress, licoes);
+  const licoes = await fetchLicoes(progress, user.id);
+
+  return mapUserProfile(user, progress, avatar, baseUrl, licoes);
 };
 
 exports.signup = async ({ nomeCompleto, email, password }) => {
@@ -182,7 +208,7 @@ exports.signup = async ({ nomeCompleto, email, password }) => {
   };
 };
 
-exports.login = async ({ email, password }) => {
+exports.login = async ({ email, password }, baseUrl = '') => {
   // Fetch user using the 'usuario' model
   const user = await db.usuario.findUnique({
     where: { email: email.toLowerCase().trim() }
@@ -225,25 +251,13 @@ exports.login = async ({ email, password }) => {
     }
   });
 
-  let licoes = [];
-  if (progress && progress.id_idioma && progress.id_nivel) {
-    licoes = await db.licao.findMany({
-      where: {
-        id_idioma: progress.id_idioma,
-        id_nivel: progress.id_nivel
-      },
-      include: {
-        progresso_licao: {
-          where: {
-            id_usuario: user.id
-          }
-        }
-      }
-    });
-  }
+  const [avatar, licoes] = await Promise.all([
+    profileService.getActiveAvatar(user.id),
+    fetchLicoes(progress, user.id),
+  ]);
 
   return {
-    user: mapUserProfile(user, progress, licoes),
+    user: mapUserProfile(user, progress, avatar, baseUrl, licoes),
     token
   };
 };
@@ -333,4 +347,59 @@ exports.resetPassword = async (token, newPassword) => {
     }
     throw error;
   }
+};
+
+/**
+ * Changes the password for an authenticated user.
+ */
+exports.changePassword = async (userId, senhaAtual, novaSenha) => {
+  const user = await db.usuario.findUnique({
+    where: { id: parseInt(userId, 10) }
+  });
+
+  if (!user) {
+    const err = new Error('Usuário não encontrado.');
+    err.status = 404;
+    throw err;
+  }
+
+  if (!user.is_ativo) {
+    const err = new Error('Esta conta está desativada.');
+    err.status = 403;
+    throw err;
+  }
+
+  const isMatch = await bcrypt.compare(senhaAtual, user.senha_hash);
+  if (!isMatch) {
+    const err = new Error('Senha atual incorreta.');
+    err.status = 401;
+    throw err;
+  }
+
+  if (senhaAtual === novaSenha) {
+    const err = new Error('A nova senha deve ser diferente da senha atual.');
+    err.status = 400;
+    throw err;
+  }
+
+  const strengthError = validatePasswordStrength(novaSenha);
+  if (strengthError) {
+    const err = new Error(strengthError);
+    err.status = 400;
+    throw err;
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(novaSenha, salt);
+
+  const updatedUser = await db.usuario.update({
+    where: { id: user.id },
+    data: { senha_hash: hashedPassword }
+  });
+
+  emailService.sendPasswordChangedEmail(updatedUser.email, updatedUser.nome_completo).catch(err => {
+    console.error('[Password Changed Email Error]', err.message);
+  });
+
+  return true;
 };
