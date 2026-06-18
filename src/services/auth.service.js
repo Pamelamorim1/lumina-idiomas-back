@@ -6,6 +6,9 @@ const db = require('../config/database'); // Prisma Client instance
 const emailService = require('./email.service');
 const profileService = require('./profile.service');
 
+const onboardingService = require('./onboarding.service');
+const lessonService = require('./lesson.service');
+
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_change_me_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
@@ -18,6 +21,16 @@ function validatePasswordStrength(password) {
   }
   return null;
 }
+
+// Re-export onboarding methods
+exports.selectLanguage = onboardingService.selectLanguage;
+exports.selectObjective = onboardingService.selectObjective;
+exports.getObjectives = onboardingService.getObjectives;
+exports.selectStartingPoint = onboardingService.selectStartingPoint;
+
+// Re-export lesson methods
+exports.getCurrentLesson = lessonService.getCurrentLesson;
+exports.completeLesson = lessonService.completeLesson;
 
 /**
  * Checks if a user exists in the database by their email.
@@ -32,56 +45,57 @@ exports.checkEmailExists = async (email) => {
   return !!user;
 };
 
+async function fetchLicoes(progress, userId) {
+  if (!progress?.id_idioma || !progress?.id_nivel) {
+    return [];
+  }
+
+  return db.licao.findMany({
+    where: {
+      id_idioma: progress.id_idioma,
+      id_nivel: progress.id_nivel
+    },
+    include: {
+      progresso_licao: {
+        where: {
+          id_usuario: userId
+        }
+      }
+    }
+  });
+}
+
 /**
  * Helper to map the database user progress and gamification to user profile.
  */
-const mapUserProfile = (user, progress, avatar, baseUrl) => {
+const mapUserProfile = (user, progress, avatar, baseUrl, licoes = []) => {
   const idiomaNome = progress?.idioma?.nome || null;
   const nivelNome = progress?.nivel?.nome || null;
   const objetivoNome = progress?.objetivo?.nome || null;
 
-  let nivelLabel = "Não Iniciado";
   let progressoPorcentagem = 0;
-
-  if (nivelNome) {
-    const nomeNorm = nivelNome.toLowerCase().trim();
-    if (nomeNorm === 'zero') {
-      nivelLabel = "Nível A0 • Iniciante";
-      progressoPorcentagem = 0;
-    } else if (nomeNorm === 'básico' || nomeNorm === 'basico') {
-      nivelLabel = "Nível A2 • Básico";
-      progressoPorcentagem = 30;
-    } else if (nomeNorm === 'intermediário' || nomeNorm === 'intermediario') {
-      nivelLabel = "Nível B1 • Intermediário";
-      progressoPorcentagem = 65;
-    } else if (nomeNorm === 'avançado' || nomeNorm === 'avancado') {
-      nivelLabel = "Nível C1 • Avançado";
-      progressoPorcentagem = 90;
-    } else {
-      nivelLabel = `Nível • ${nivelNome}`;
-      progressoPorcentagem = 10;
-    }
+  if (licoes.length > 0) {
+    const totalProgress = licoes.reduce((acc, lic) => {
+      const prog = lic.progresso_licao?.[0];
+      return acc + (prog ? (prog.progresso_porcentagem || 0) : 0);
+    }, 0);
+    progressoPorcentagem = Math.round(totalProgress / licoes.length);
   }
 
-  const diasSeguidos = progress?.usuario_gamificacao?.dias_ofensiva ?? 1;
-  const pontosGanhos = progress?.usuario_gamificacao?.pontos_acumulados ?? 150;
+  const diasSeguidos = progress?.usuario_gamificacao?.dias_ofensiva ?? 0;
+  const pontosGanhos = progress?.usuario_gamificacao?.pontos_acumulados ?? 0;
 
-  const licoesDoDia = [
-    {
-      id: 1,
-      titulo: "Verbos Modais",
-      duracao: "10 min",
-      progresso: 0.4,
-      tipo: "grammar"
-    },
-    {
-      id: 2,
-      titulo: "Conversação no Café",
-      duracao: "15 min",
-      progresso: 0.0,
-      tipo: "conversation"
-    }
-  ];
+  const licoesDoDia = licoes.map(lic => {
+    const prog = lic.progresso_licao?.[0];
+    const pct = prog ? (prog.progresso_porcentagem || 0) : 0;
+    return {
+      id: lic.id,
+      titulo: lic.titulo,
+      duracao: `${lic.duracao_minutos || 10} min`,
+      progresso: pct / 100,
+      tipo: lic.tipo || 'grammar'
+    };
+  });
 
   return {
     id: user.id,
@@ -98,7 +112,7 @@ const mapUserProfile = (user, progress, avatar, baseUrl) => {
     cursoAtivo: idiomaNome,
     nivelAtivo: nivelNome,
     objetivoAtivo: objetivoNome,
-    nivelLabel,
+    nivelLabel: nivelNome ? `Nível ${nivelNome}` : "Não Iniciado",
     progressoPorcentagem,
     diasSeguidos,
     pontosGanhos,
@@ -141,7 +155,9 @@ exports.getUserById = async (id, baseUrl = '') => {
     profileService.getActiveAvatar(user.id),
   ]);
 
-  return mapUserProfile(user, progress, avatar, baseUrl);
+  const licoes = await fetchLicoes(progress, user.id);
+
+  return mapUserProfile(user, progress, avatar, baseUrl, licoes);
 };
 
 exports.signup = async ({ nomeCompleto, email, password }) => {
@@ -235,10 +251,13 @@ exports.login = async ({ email, password }, baseUrl = '') => {
     }
   });
 
-  const avatar = await profileService.getActiveAvatar(user.id);
+  const [avatar, licoes] = await Promise.all([
+    profileService.getActiveAvatar(user.id),
+    fetchLicoes(progress, user.id),
+  ]);
 
   return {
-    user: mapUserProfile(user, progress, avatar, baseUrl),
+    user: mapUserProfile(user, progress, avatar, baseUrl, licoes),
     token
   };
 };
@@ -383,151 +402,4 @@ exports.changePassword = async (userId, senhaAtual, novaSenha) => {
   });
 
   return true;
-};
-
-/**
- * Selects language for a user and sets stage to OBJETIVO_CADASTRO.
- */
-exports.selectLanguage = async (userId, idiomaId, etapaCadastroId) => {
-  const lang = await db.idioma.findUnique({
-    where: { id: parseInt(idiomaId, 10) }
-  });
-
-  if (!lang) {
-    const err = new Error('Idioma selecionado inválido.');
-    err.status = 400;
-    throw err;
-  }
-
-  const nextEtapaId = etapaCadastroId ? parseInt(etapaCadastroId, 10) : 2;
-
-  // Check if there is an existing record
-  const existing = await db.usuario_idioma.findFirst({
-    where: { id_usuario: parseInt(userId, 10) }
-  });
-
-  let record;
-  if (existing) {
-    record = await db.usuario_idioma.update({
-      where: { id: existing.id },
-      data: {
-        id_idioma: lang.id,
-        id_etapa: nextEtapaId
-      }
-    });
-  } else {
-    record = await db.usuario_idioma.create({
-      data: {
-        id_usuario: parseInt(userId, 10),
-        id_idioma: lang.id,
-        id_etapa: nextEtapaId
-      }
-    });
-  }
-
-  return {
-    etapaCadastro: record.id_etapa,
-    idiomaId: record.id_idioma,
-    idiomaNome: lang.nome
-  };
-};
-
-/**
- * Selects/Updates the user's objective and sets stage to PARTIDA_CADASTRO.
- */
-exports.selectObjective = async (userId, objetivoId, etapaCadastroId) => {
-  const objective = await db.objetivo.findUnique({
-    where: { id: parseInt(objetivoId, 10) }
-  });
-
-  if (!objective) {
-    const err = new Error('Objetivo selecionado inválido.');
-    err.status = 400;
-    throw err;
-  }
-
-  const nextEtapaId = etapaCadastroId ? parseInt(etapaCadastroId, 10) : 3;
-
-  // Get the latest usuario_idioma record for the user
-  const existing = await db.usuario_idioma.findFirst({
-    where: { id_usuario: parseInt(userId, 10) },
-    orderBy: { id: 'desc' }
-  });
-
-  if (!existing) {
-    const err = new Error('Nenhum idioma selecionado para este usuário ainda.');
-    err.status = 400;
-    throw err;
-  }
-
-  const record = await db.usuario_idioma.update({
-    where: { id: existing.id },
-    data: {
-      id_objetivo: objective.id,
-      id_etapa: nextEtapaId
-    }
-  });
-
-  return {
-    etapaCadastro: record.id_etapa,
-    objetivoId: record.id_objetivo,
-    objetivoNome: objective.nome
-  };
-};
-
-/**
- * Fetches all objectives from the database.
- */
-exports.getObjectives = async () => {
-  return await db.objetivo.findMany({
-    orderBy: { id: 'asc' }
-  });
-};
-
-/**
- * Sets the user's starting point and finalizes onboarding (or updates stage).
- */
-exports.selectStartingPoint = async (userId, pontoPartida, etapaCadastroId) => {
-  if (!['zero', 'teste'].includes(pontoPartida)) {
-    const err = new Error("O campo pontoPartida deve ser 'zero' ou 'teste'.");
-    err.status = 400;
-    throw err;
-  }
-
-  // Get the latest usuario_idioma record for the user
-  const existing = await db.usuario_idioma.findFirst({
-    where: { id_usuario: parseInt(userId, 10) },
-    orderBy: { id: 'desc' }
-  });
-
-  if (!existing) {
-    const err = new Error('Nenhum registro de idioma/objetivo encontrado para este usuário.');
-    err.status = 400;
-    throw err;
-  }
-
-  const nextEtapaId = etapaCadastroId ? parseInt(etapaCadastroId, 10) : 4;
-
-  let nivelId = null;
-  if (pontoPartida === 'zero') {
-    // Find the level with name 'Zero'
-    const zeroNivel = await db.nivel.findFirst({
-      where: { nome: 'Zero' }
-    });
-    nivelId = zeroNivel ? zeroNivel.id : 1;
-  }
-
-  const record = await db.usuario_idioma.update({
-    where: { id: existing.id },
-    data: {
-      id_nivel: nivelId,
-      id_etapa: nextEtapaId
-    }
-  });
-
-  return {
-    etapaCadastro: record.id_etapa,
-    nivelId: record.id_nivel,
-    pontoPartida
-  };
 };

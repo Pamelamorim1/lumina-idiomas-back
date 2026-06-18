@@ -26,5 +26,7 @@ router.post('/select-language', authMiddleware, authController.selectLanguage);
 router.post('/select-objective', authMiddleware, authController.selectObjective);
 router.get('/objectives', authMiddleware, authController.getObjectives);
 router.post('/select-starting-point', authMiddleware, authController.selectStartingPoint);
+router.get('/current-lesson', authMiddleware, authController.getCurrentLesson);
+router.post('/complete-lesson', authMiddleware, authController.completeLesson);
 
 module.exports = router;

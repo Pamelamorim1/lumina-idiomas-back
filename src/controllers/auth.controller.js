@@ -331,3 +331,57 @@ exports.selectStartingPoint = async (req, res, next) => {
     next(error);
   }
 };
+
+exports.getCurrentLesson = async (req, res, next) => {
+  try {
+    const userId = req.userId;
+    const result = await authService.getCurrentLesson(userId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Lição atual recuperada com sucesso!',
+      data: result
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        success: false,
+        message: error.message,
+        data: null
+      });
+    }
+    next(error);
+  }
+};
+
+exports.completeLesson = async (req, res, next) => {
+  try {
+    const userId = req.userId;
+    const { licaoId, points, respostasCorretas, totalQuestoes } = req.body;
+
+    if (!licaoId) {
+      return res.status(400).json({
+        success: false,
+        message: 'O ID da lição (licaoId) é obrigatório.',
+        data: null
+      });
+    }
+
+    await authService.completeLesson(userId, licaoId, points, respostasCorretas, totalQuestoes);
+
+    res.status(200).json({
+      success: true,
+      message: 'Progresso da lição salvo com sucesso!',
+      data: null
+    });
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        success: false,
+        message: error.message,
+        data: null
+      });
+    }
+    next(error);
+  }
+};
