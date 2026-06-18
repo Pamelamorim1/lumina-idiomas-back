@@ -1,9 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const path = require('path');
 require('dotenv').config();
 
 const db = require('./config/database');
+const storageService = require('./services/storage.service');
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -16,6 +18,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
+
+storageService.ensureUploadDirs();
+app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+  maxAge: '7d',
+  etag: true,
+}));
 
 // Request logger middleware
 app.use((req, res, next) => {

@@ -44,7 +44,8 @@ exports.checkEmail = async (req, res, next) => {
 exports.getMe = async (req, res, next) => {
   try {
     const userId = req.userId;
-    const user = await authService.getUserById(userId);
+    const baseUrl = process.env.API_BASE_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+    const user = await authService.getUserById(userId, baseUrl);
 
     if (!user) {
       return res.status(404).json({
@@ -107,7 +108,8 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    const result = await authService.login({ email, password });
+    const baseUrl = process.env.API_BASE_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+    const result = await authService.login({ email, password }, baseUrl);
 
     res.status(200).json({
       success: true,

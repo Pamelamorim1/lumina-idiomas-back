@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database'); // Prisma Client instance
 const emailService = require('./email.service');
+const profileService = require('./profile.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_change_me_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
@@ -34,7 +35,7 @@ exports.checkEmailExists = async (email) => {
 /**
  * Helper to map the database user progress and gamification to user profile.
  */
-const mapUserProfile = (user, progress) => {
+const mapUserProfile = (user, progress, avatar, baseUrl) => {
   const idiomaNome = progress?.idioma?.nome || null;
   const nivelNome = progress?.nivel?.nome || null;
   const objetivoNome = progress?.objetivo?.nome || null;
@@ -86,6 +87,11 @@ const mapUserProfile = (user, progress) => {
     id: user.id,
     nomeCompleto: user.nome_completo,
     email: user.email,
+    telefone: user.telefone ?? null,
+    bio: user.bio ?? null,
+    fotoUrl: avatar
+      ? profileService.buildFotoUrl(baseUrl || '', avatar.caminho, avatar.data_criacao)
+      : null,
     criadoEm: user.data_criacao,
     ativo: user.is_ativo,
     etapaCadastro: progress?.id_etapa || 1,
@@ -105,13 +111,15 @@ const mapUserProfile = (user, progress) => {
  * @param {number|string} id 
  * @returns {Promise<object|null>}
  */
-exports.getUserById = async (id) => {
+exports.getUserById = async (id, baseUrl = '') => {
   const user = await db.usuario.findUnique({
     where: { id: parseInt(id, 10) },
     select: {
       id: true,
       nome_completo: true,
       email: true,
+      telefone: true,
+      bio: true,
       is_ativo: true,
       data_criacao: true
     }
@@ -119,18 +127,21 @@ exports.getUserById = async (id) => {
 
   if (!user) return null;
 
-  const progress = await db.usuario_idioma.findFirst({
-    where: { id_usuario: user.id },
-    orderBy: { id: 'desc' },
-    include: {
-      idioma: true,
-      nivel: true,
-      objetivo: true,
-      usuario_gamificacao: true
-    }
-  });
+  const [progress, avatar] = await Promise.all([
+    db.usuario_idioma.findFirst({
+      where: { id_usuario: user.id },
+      orderBy: { id: 'desc' },
+      include: {
+        idioma: true,
+        nivel: true,
+        objetivo: true,
+        usuario_gamificacao: true
+      }
+    }),
+    profileService.getActiveAvatar(user.id),
+  ]);
 
-  return mapUserProfile(user, progress);
+  return mapUserProfile(user, progress, avatar, baseUrl);
 };
 
 exports.signup = async ({ nomeCompleto, email, password }) => {
@@ -181,7 +192,7 @@ exports.signup = async ({ nomeCompleto, email, password }) => {
   };
 };
 
-exports.login = async ({ email, password }) => {
+exports.login = async ({ email, password }, baseUrl = '') => {
   // Fetch user using the 'usuario' model
   const user = await db.usuario.findUnique({
     where: { email: email.toLowerCase().trim() }
@@ -224,8 +235,10 @@ exports.login = async ({ email, password }) => {
     }
   });
 
+  const avatar = await profileService.getActiveAvatar(user.id);
+
   return {
-    user: mapUserProfile(user, progress),
+    user: mapUserProfile(user, progress, avatar, baseUrl),
     token
   };
 };

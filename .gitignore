@@ -34,3 +34,6 @@ Thumbs.db
 
 # Documentation (local only)
 doc/
+
+# User uploads
+uploads/
